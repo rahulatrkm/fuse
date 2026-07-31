@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+<title>Fuse — the premium merge puzzle</title>
+<meta name="description" content="Fuse is a beautiful, addictive merge puzzle. Slide the tiles, fuse the numbers, chase 2048 and beyond. Premium themes, undo, daily challenge and time attack." />
+<meta name="theme-color" content="#0b1020" />
+<meta property="og:title" content="Fuse — the premium merge puzzle" />
+<meta property="og:description" content="Slide, fuse, and chase 2048. The most-loved puzzle, made premium: silky themes, undo, and time attack." />
+<meta property="og:type" content="website" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect rx='22' width='100' height='100' fill='%237c5cff'/%3E%3Ctext x='50' y='68' font-size='54' text-anchor='middle' fill='white' font-family='Arial' font-weight='bold'%3EF%3C/text%3E%3C/svg%3E" />
+<style>
+  :root{
+    --bg:#0b1020; --panel:#141a30; --ink:#eef1ff; --muted:#9aa3c7;
+    --accent:#7c5cff; --accent2:#22d3ee; --grid:#1c2340; --cell:#232b4d;
+    --shadow:0 10px 30px rgba(0,0,0,.45);
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+  html,body{margin:0; height:100%; background:radial-gradient(1200px 800px at 50% -10%, #1a2244, var(--bg));
+    color:var(--ink); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,system-ui,sans-serif;
+    overflow:hidden; user-select:none; touch-action:none}
+  .app{max-width:520px; margin:0 auto; height:100%; display:flex; flex-direction:column; padding:16px calc(16px + env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left))}
+
+  header{display:flex; align-items:center; gap:12px; margin-bottom:14px}
+  .logo{font-weight:900; font-size:1.8rem; letter-spacing:.5px;
+    background:linear-gradient(90deg,var(--accent),var(--accent2)); -webkit-background-clip:text; background-clip:text; color:transparent}
+  .tag{color:var(--muted); font-size:.72rem; margin-top:-4px}
+  .spacer{flex:1}
+  .icon-btn{border:0; cursor:pointer; background:var(--panel); color:var(--ink); border:1px solid #2a3459;
+    width:42px; height:42px; border-radius:12px; font-size:1.1rem; display:grid; place-items:center}
+  .icon-btn:active{transform:translateY(1px)}
+
+  .scores{display:flex; gap:10px; margin-bottom:14px}
+  .score{flex:1; background:var(--panel); border:1px solid #2a3459; border-radius:14px; padding:8px 12px; text-align:center}
+  .score small{display:block; color:var(--muted); font-size:.66rem; text-transform:uppercase; letter-spacing:1px}
+  .score b{font-size:1.3rem; font-variant-numeric:tabular-nums}
+  .pro-badge{font-size:.6rem; background:linear-gradient(90deg,var(--accent),var(--accent2)); color:#fff;
+    padding:2px 7px; border-radius:999px; vertical-align:middle; margin-left:6px; font-weight:800}
+
+  .boardwrap{position:relative; width:100%; aspect-ratio:1/1; background:var(--grid);
+    border-radius:18px; padding:12px; box-shadow:var(--shadow); touch-action:none}
+  #board{position:absolute; inset:12px}
+  .bg-cell,.tile{position:absolute; border-radius:12px}
+  .bg-cell{background:var(--cell)}
+  .tile{display:grid; place-items:center; font-weight:800; color:#0b1020;
+    transition:transform .12s cubic-bezier(.2,.8,.3,1); will-change:transform; font-variant-numeric:tabular-nums}
+  .tile.pop{animation:pop .18s ease}
+  .tile.spawn{animation:spawn .18s ease}
+  @keyframes pop{0%{transform:scale(1)}50%{transform:scale(1.16)}100%{transform:scale(1)}}
+  @keyframes spawn{0%{transform:scale(.1); opacity:.2}100%{transform:scale(1); opacity:1}}
+
+  .controls{display:flex; gap:10px; margin-top:14px}
+  .btn{flex:1; border:0; cursor:pointer; font-weight:800; font-size:1rem; color:#fff; padding:13px 16px; border-radius:14px;
+    background:linear-gradient(180deg,#8a6bff,#6b46ff); box-shadow:0 6px 0 #4a2fcf}
+  .btn:active{transform:translateY(3px); box-shadow:0 3px 0 #4a2fcf}
+  .btn.ghost{background:var(--panel); border:1px solid #2a3459; box-shadow:0 6px 0 #0c1226; color:var(--ink)}
+  .btn.ghost:active{box-shadow:0 3px 0 #0c1226}
+  .hint{color:var(--muted); font-size:.78rem; text-align:center; margin-top:12px}
+
+  /* overlays */
+  .overlay{position:fixed; inset:0; background:rgba(6,9,20,.82); backdrop-filter:blur(6px);
+    display:none; align-items:center; justify-content:center; padding:22px; z-index:50}
+  .overlay.show{display:flex}
+  .card{background:var(--panel); border:1px solid #2a3459; border-radius:22px; padding:26px 24px; max-width:400px; width:100%;
+    text-align:center; box-shadow:var(--shadow); max-height:90vh; overflow:auto}
+  .card h2{margin:.1em 0 .2em; font-size:1.7rem}
+  .card p{color:var(--muted); margin:.4em 0 1em; line-height:1.5}
+  .feature{display:flex; gap:12px; align-items:center; text-align:left; padding:10px 12px; background:#0f1530;
+    border:1px solid #2a3459; border-radius:12px; margin:8px 0}
+  .feature .em{font-size:1.4rem}
+  .feature b{display:block}
+  .feature small{color:var(--muted)}
+  .price{font-size:2.4rem; font-weight:900; margin:6px 0 2px}
+  .price small{font-size:1rem; color:var(--muted); font-weight:600}
+  .locked{opacity:.5; filter:grayscale(.4)}
+  .modes{display:flex; flex-wrap:wrap; gap:10px; margin:14px 0}
+  .mode{flex:1 1 40%; cursor:pointer; border:2px solid transparent; background:#0f1530; border-radius:14px; padding:14px 10px}
+  .mode.on{border-color:var(--accent)}
+  .mode .em{font-size:1.6rem}
+  .mode b{display:block; margin-top:4px}
+  .mode small{color:var(--muted); font-size:.72rem}
+  .themes{display:flex; gap:10px; flex-wrap:wrap; justify-content:center; margin:14px 0}
+  .swatch{width:46px; height:46px; border-radius:12px; cursor:pointer; border:2px solid transparent; position:relative}
+  .swatch.on{border-color:#fff}
+  .swatch .lk{position:absolute; right:-4px; top:-6px; font-size:.8rem}
+  .field{width:100%; padding:12px; border-radius:12px; border:1px solid #2a3459; background:#0f1530; color:var(--ink);
+    font-size:1rem; text-align:center; letter-spacing:2px; margin:6px 0}
+  .link{color:var(--accent2); cursor:pointer; text-decoration:underline; font-size:.82rem}
+  .small{font-size:.72rem; color:var(--muted)}
+  .toast{position:fixed; left:50%; bottom:24px; transform:translateX(-50%) translateY(20px); opacity:0;
+    background:var(--panel); border:1px solid #2a3459; padding:10px 18px; border-radius:12px; transition:.25s; z-index:60; font-size:.9rem}
+  .toast.show{opacity:1; transform:translateX(-50%) translateY(0)}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div>
+      <div class="logo">Fuse</div>
+      <div class="tag">merge · match · master</div>
+    </div>
+    <div class="spacer"></div>
+    <button class="icon-btn" id="undoBtn" title="Undo (Pro)">↶</button>
+    <button class="icon-btn" id="themeBtn" title="Themes">🎨</button>
+    <button class="icon-btn" id="menuBtn" title="Menu">☰</button>
+  </header>
+
+  <div class="scores">
+    <div class="score"><small>Score</small><b id="score">0</b></div>
+    <div class="score"><small id="modeLabel">Best</small><b id="best">0</b></div>
+    <div class="score"><small>Fuses</small><b id="moves">0</b></div>
+  </div>
+
+  <div class="boardwrap">
+    <div id="board"></div>
+  </div>
+
+  <div class="controls">
+    <button class="btn ghost" id="newBtn">New game</button>
+    <button class="btn" id="proBtn">✨ Go Pro</button>
+  </div>
+  <div class="hint">Swipe or use arrow keys / WASD. Fuse equal tiles to reach <b>2048</b> — and beyond.</div>
+</div>
+
+<!-- Win / Lose -->
+<div class="overlay" id="endOverlay">
+  <div class="card">
+    <h2 id="endTitle">Game over</h2>
+    <p id="endMsg">No more moves. Nice run!</p>
+    <div class="controls">
+      <button class="btn ghost" id="endClose">Close</button>
+      <button class="btn" id="endNew">Play again</button>
+    </div>
+  </div>
+</div>
+
+<!-- Menu / modes -->
+<div class="overlay" id="menuOverlay">
+  <div class="card">
+    <h2>Game modes</h2>
+    <p>Pick how you play. <b>Time Attack</b> & <b>Daily</b> are <span class="pro-badge">PRO</span>.</p>
+    <div class="modes" id="modeList">
+      <div class="mode on" data-mode="classic"><div class="em">🎯</div><b>Classic</b><small>Endless, chill</small></div>
+      <div class="mode" data-mode="time"><div class="em">⏱️</div><b>Time Attack</b><small>90 seconds</small></div>
+      <div class="mode" data-mode="daily"><div class="em">📅</div><b>Daily</b><small>Same board for all</small></div>
+      <div class="mode" data-mode="big"><div class="em">🧩</div><b>5×5 Grid</b><small>Big brain mode</small></div>
+    </div>
+    <button class="btn" id="menuStart">Start</button>
+    <p class="small" style="margin-top:14px">Fuse is a self-contained web game — no ads, no tracking, works offline.</p>
+  </div>
+</div>
+
+<!-- Themes -->
+<div class="overlay" id="themeOverlay">
+  <div class="card">
+    <h2>Themes</h2>
+    <p>Free: <b>Midnight</b>. Unlock the full pack with <span class="pro-badge">PRO</span>.</p>
+    <div class="themes" id="themeList"></div>
+    <button class="btn ghost" id="themeClose">Done</button>
+  </div>
+</div>
+
+<!-- Paywall -->
+<div class="overlay" id="proOverlay">
+  <div class="card">
+    <h2>Fuse Pro ✨</h2>
+    <p>Unlock the full experience — once. Yours forever.</p>
+    <div class="feature"><span class="em">↶</span><div><b>Unlimited Undo</b><small>Take back any move</small></div></div>
+    <div class="feature"><span class="em">🎨</span><div><b>6 Premium Themes</b><small>Sunset, Emerald, Neon & more</small></div></div>
+    <div class="feature"><span class="em">⏱️</span><div><b>Time Attack + Daily</b><small>Compete on the same board every day</small></div></div>
+    <div class="feature"><span class="em">🧩</span><div><b>5×5 Big Grid</b><small>A deeper challenge</small></div></div>
+    <div class="price">$4.99 <small>one-time</small></div>
+    <button class="btn" id="buyBtn" style="margin:8px 0">Unlock Pro</button>
+    <div class="small">Already bought? <span class="link" id="haveKey">Enter your key</span></div>
+    <div id="keyBox" style="display:none">
+      <input class="field" id="keyInput" placeholder="XXXX-XXXX" maxlength="9" />
+      <button class="btn ghost" id="redeem">Redeem</button>
+    </div>
+    <div class="small" style="margin-top:10px"><span class="link" id="proClose">Maybe later</span></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(() => {
+  "use strict";
+  // ---------- Config ----------
+  const BUY_URL = "https://rahulatrkm.gumroad.com/l/fuse"; // TODO: point at real Gumroad/Stripe product
+  const LS = {
+    best:"fuse.best", pro:"fuse.pro", theme:"fuse.theme", state:"fuse.state", bestTime:"fuse.best.time"
+  };
+  const THEMES = {
+    midnight:{name:"Midnight", pro:false, sw:"linear-gradient(135deg,#7c5cff,#22d3ee)",
+      vars:{"--bg":"#0b1020","--panel":"#141a30","--grid":"#1c2340","--cell":"#232b4d","--accent":"#7c5cff","--accent2":"#22d3ee"}},
+    sunset:{name:"Sunset", pro:true, sw:"linear-gradient(135deg,#ff7e5f,#feb47b)",
+      vars:{"--bg":"#1a0f16","--panel":"#2a1620","--grid":"#3a1d28","--cell":"#4a2634","--accent":"#ff7e5f","--accent2":"#feb47b"}},
+    emerald:{name:"Emerald", pro:true, sw:"linear-gradient(135deg,#11998e,#38ef7d)",
+      vars:{"--bg":"#06140f","--panel":"#0d241b","--grid":"#12302433","--cell":"#123024","--accent":"#11998e","--accent2":"#38ef7d"}},
+    neon:{name:"Neon", pro:true, sw:"linear-gradient(135deg,#ff00cc,#3333ff)",
+      vars:{"--bg":"#0a0014","--panel":"#170a2a","--grid":"#22103d","--cell":"#2c1550","--accent":"#ff00cc","--accent2":"#00e5ff"}},
+    gold:{name:"Royal", pro:true, sw:"linear-gradient(135deg,#f7971e,#ffd200)",
+      vars:{"--bg":"#12100a","--panel":"#221d10","--grid":"#332a12","--cell":"#453818","--accent":"#f7971e","--accent2":"#ffd200"}},
+    mono:{name:"Ink", pro:true, sw:"linear-gradient(135deg,#434343,#000)",
+      vars:{"--bg":"#0a0a0a","--panel":"#151515","--grid":"#1f1f1f","--cell":"#2a2a2a","--accent":"#e5e5e5","--accent2":"#9a9a9a"}},
+    ocean:{name:"Ocean", pro:true, sw:"linear-gradient(135deg,#2193b0,#6dd5ed)",
+      vars:{"--bg":"#04121a","--panel":"#0a2130","--grid":"#0e3143","--cell":"#124055","--accent":"#2193b0","--accent2":"#6dd5ed"}},
+  };
+  const TILE_COLORS = {
+    2:"#e9e4ff",4:"#d6ccff",8:"#b8a6ff",16:"#9a7fff",32:"#7c5cff",64:"#6b46ff",
+    128:"#22d3ee",256:"#12b8d6",512:"#0ea5c4",1024:"#38ef7d",2048:"#ffd200",
+    4096:"#ff7e5f",8192:"#ff00cc"
+  };
+
+  // ---------- State ----------
+  let N = 4;            // grid size
+  let grid = [];        // N*N of {v,id} or null
+  let score = 0, moves = 0, mode = "classic";
+  let history = [];     // for undo (Pro)
+  let uid = 1, animating = false, won = false, dead = false;
+  let timeLeft = 0, timer = null;
+
+  const $ = s => document.querySelector(s);
+  const board = $("#board");
+
+  function isPro(){ return localStorage.getItem(LS.pro) === "1"; }
+  function toast(msg){ const t=$("#toast"); t.textContent=msg; t.classList.add("show"); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove("show"),1800); }
+
+  // ---------- Theme ----------
+  function applyTheme(key){
+    const th = THEMES[key] || THEMES.midnight;
+    if(th.pro && !isPro()) return applyTheme("midnight");
+    Object.entries(th.vars).forEach(([k,v])=>document.documentElement.style.setProperty(k,v));
+    localStorage.setItem(LS.theme, key);
+  }
+
+  // ---------- Grid helpers ----------
+  function emptyGrid(){ return Array.from({length:N*N}, ()=>null); }
+  function idx(r,c){ return r*N+c; }
+  function emptyCells(){ const a=[]; for(let i=0;i<N*N;i++) if(!grid[i]) a.push(i); return a; }
+  function addRandom(){
+    const e = emptyCells(); if(!e.length) return;
+    const i = e[Math.floor(rand()*e.length)];
+    grid[i] = {v: rand()<0.9?2:4, id: uid++, isNew:true};
+  }
+
+  // seeded RNG for Daily mode
+  let seed = 0;
+  function rand(){ if(mode!=="daily") return Math.random();
+    seed = (seed*9301+49297) % 233280; return seed/233280; }
+
+  function newGame(keepMode){
+    if(!keepMode) mode = mode || "classic";
+    N = mode==="big" ? 5 : 4;
+    if(mode==="daily"){ const d=new Date(); seed = d.getFullYear()*10000 + (d.getMonth()+1)*100 + d.getDate(); }
+    grid = emptyGrid(); score=0; moves=0; history=[]; won=false; dead=false; uid=1;
+    addRandom(); addRandom();
+    if(timer){ clearInterval(timer); timer=null; }
+    if(mode==="time"){ timeLeft=90; startTimer(); }
+    render(true); syncScores(); saveState();
+  }
+
+  function startTimer(){
+    timer = setInterval(()=>{
+      timeLeft--; $("#modeLabel").textContent = "Time"; $("#best").textContent = timeLeft+"s";
+      if(timeLeft<=0){ clearInterval(timer); timer=null; endGame(false, "Time! Final score "+score); }
+    },1000);
+  }
+
+  // ---------- Moves ----------
+  function snapshot(){ return {grid:grid.map(c=>c?{v:c.v,id:c.id}:null), score, moves}; }
+  function pushHistory(){ history.push(snapshot()); if(history.length>50) history.shift(); }
+
+  function slide(dir){
+    if(animating || dead) return;
+    const before = JSON.stringify(grid.map(c=>c?c.v:0));
+    pushHistory();
+    // Build line order
+    const lines = [];
+    for(let i=0;i<N;i++){
+      const line=[];
+      for(let j=0;j<N;j++){
+        let r,c;
+        if(dir==="left"){r=i;c=j} else if(dir==="right"){r=i;c=N-1-j}
+        else if(dir==="up"){r=j;c=i} else {r=N-1-j;c=i}
+        line.push(idx(r,c));
+      }
+      lines.push(line);
+    }
+    let gained=0, madeMove=false;
+    lines.forEach(line=>{
+      const cells = line.map(i=>grid[i]).filter(Boolean);
+      const merged=[];
+      for(let k=0;k<cells.length;k++){
+        if(k+1<cells.length && cells[k].v===cells[k+1].v){
+          const nv=cells[k].v*2;
+          merged.push({v:nv, id:cells[k].id, merged:true});
+          gained+=nv; if(nv>=2048) won=true;
+          k++;
+        } else merged.push({v:cells[k].v, id:cells[k].id});
+      }
+      line.forEach((i,pos)=>{ grid[i] = merged[pos] || null; });
+    });
+    const after = JSON.stringify(grid.map(c=>c?c.v:0));
+    madeMove = before!==after;
+    if(!madeMove){ history.pop(); return; }
+    score += gained; moves++;
+    addRandom();
+    render();
+    syncScores(); saveState();
+    if(won && !dead){ won=false; endGame(true,"You reached 2048! Keep going for a higher score."); }
+    else if(!hasMoves()){ endGame(false,"No more moves. Final score "+score+"."); }
+  }
+
+  function hasMoves(){
+    if(emptyCells().length) return true;
+    for(let r=0;r<N;r++)for(let c=0;c<N;c++){
+      const v=grid[idx(r,c)].v;
+      if(c+1<N && grid[idx(r,c+1)].v===v) return true;
+      if(r+1<N && grid[idx(r+1,c)].v===v) return true;
+    }
+    return false;
+  }
+
+  function undo(){
+    if(!isPro()) return openPro();
+    if(!history.length) return toast("Nothing to undo");
+    const s = history.pop();
+    grid = s.grid.map(c=>c?{v:c.v,id:c.id}:null);
+    score=s.score; moves=s.moves; dead=false;
+    render(true); syncScores(); saveState();
+  }
+
+  // ---------- Render ----------
+  function cellGeom(){
+    const size = board.clientWidth; const gap = size*0.03;
+    const cs = (size - gap*(N+1))/N;
+    return {size,gap,cs};
+  }
+  function place(el,r,c){ const {gap,cs}=cellGeom();
+    el.style.width=cs+"px"; el.style.height=cs+"px";
+    el.style.transform=`translate(${gap+c*(cs+gap)}px,${gap+r*(cs+gap)}px)`; }
+
+  function fontFor(v,cs){ const len=String(v).length; let f=cs*0.42; if(len>=3)f=cs*0.34; if(len>=4)f=cs*0.27; return f+"px"; }
+
+  let tileEls = {};
+  function render(rebuild){
+    const {cs}=cellGeom();
+    if(rebuild || board.childElementCount===0 || board.querySelectorAll('.bg-cell').length!==N*N){
+      board.innerHTML=""; tileEls={};
+      for(let r=0;r<N;r++)for(let c=0;c<N;c++){ const bc=document.createElement('div'); bc.className='bg-cell'; place(bc,r,c); board.appendChild(bc); }
+    }
+    const seen={};
+    for(let r=0;r<N;r++)for(let c=0;c<N;c++){
+      const cell=grid[idx(r,c)]; if(!cell) continue;
+      seen[cell.id]=true;
+      let el=tileEls[cell.id];
+      if(!el){ el=document.createElement('div'); el.className='tile'; board.appendChild(el); tileEls[cell.id]=el;
+        el.classList.add(cell.isNew?'spawn':'spawn'); }
+      el.textContent=cell.v;
+      el.style.background=TILE_COLORS[cell.v]||"#ff00cc";
+      el.style.color = cell.v>=128 ? "#04101a" : "#0b1020";
+      el.style.fontSize=fontFor(cell.v,cs);
+      place(el,r,c);
+      if(cell.merged){ el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop'); cell.merged=false; }
+      cell.isNew=false;
+    }
+    // remove gone tiles
+    Object.keys(tileEls).forEach(id=>{ if(!seen[id]){ tileEls[id].remove(); delete tileEls[id]; } });
+  }
+
+  function syncScores(){
+    $("#score").textContent=score; $("#moves").textContent=moves;
+    if(mode==="time"){ $("#modeLabel").textContent="Time"; $("#best").textContent=timeLeft+"s"; }
+    else {
+      let best=+(localStorage.getItem(LS.best)||0);
+      if(score>best){ best=score; localStorage.setItem(LS.best,best); }
+      $("#modeLabel").textContent="Best"; $("#best").textContent=best;
+    }
+  }
+
+  function endGame(win, msg){
+    dead=true; if(timer){clearInterval(timer);timer=null;}
+    $("#endTitle").textContent = win?"You win! 🎉":"Game over";
+    $("#endMsg").textContent = msg;
+    $("#endOverlay").classList.add("show");
+  }
+
+  function saveState(){
+    if(mode==="daily"||mode==="time") return;
+    localStorage.setItem(LS.state, JSON.stringify({grid:grid.map(c=>c?{v:c.v,id:c.id}:null),score,moves,mode,N,uid}));
+  }
+  function loadState(){
+    try{ const s=JSON.parse(localStorage.getItem(LS.state)); if(!s||!s.grid) return false;
+      mode=s.mode||"classic"; N=s.N||4; grid=s.grid.map(c=>c?{v:c.v,id:c.id}:null);
+      score=s.score||0; moves=s.moves||0; uid=s.uid||1; return true;
+    }catch(e){ return false; }
+  }
+
+  // ---------- Pro / license ----------
+  // Simple offline-verifiable key: FUSE prefix checksum. (Server-issued keys can also set fuse.pro=1.)
+  function validKey(k){
+    k=(k||"").toUpperCase().replace(/[^A-Z0-9]/g,"");
+    if(k.length!==8) return false;
+    let sum=0; for(let i=0;i<7;i++) sum=(sum*31 + k.charCodeAt(i))%36;
+    const chk="0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"[sum];
+    return chk===k[7];
+  }
+  function unlockPro(){ localStorage.setItem(LS.pro,"1"); refreshProUI(); toast("Fuse Pro unlocked ✨"); }
+  function refreshProUI(){
+    document.querySelectorAll('[data-mode="time"],[data-mode="daily"],[data-mode="big"]').forEach(m=>m.classList.toggle('locked', !isPro()));
+    $("#proBtn").style.display = isPro() ? "none":"block";
+    buildThemes();
+  }
+
+  // ---------- Themes UI ----------
+  function buildThemes(){
+    const list=$("#themeList"); list.innerHTML="";
+    const cur=localStorage.getItem(LS.theme)||"midnight";
+    Object.entries(THEMES).forEach(([key,th])=>{
+      const s=document.createElement('div'); s.className='swatch'+(key===cur?' on':'');
+      s.style.background=th.sw; s.title=th.name;
+      if(th.pro && !isPro()) s.innerHTML='<span class="lk">🔒</span>';
+      s.onclick=()=>{ if(th.pro && !isPro()) return openPro();
+        applyTheme(key); buildThemes(); };
+      list.appendChild(s);
+    });
+  }
+
+  // ---------- Overlays ----------
+  function openPro(){ $("#proOverlay").classList.add("show"); }
+  function close(id){ $(id).classList.remove("show"); }
+
+  // ---------- Input ----------
+  window.addEventListener("keydown",e=>{
+    const k=e.key.toLowerCase();
+    const map={arrowleft:"left",a:"left",arrowright:"right",d:"right",arrowup:"up",w:"up",arrowdown:"down",s:"down"};
+    if(map[k]){ e.preventDefault(); slide(map[k]); }
+    if(k==="z"&&(e.ctrlKey||e.metaKey)) undo();
+  });
+  let sx=0,sy=0,swiping=false;
+  const wrap=document.querySelector(".boardwrap");
+  wrap.addEventListener("touchstart",e=>{ const t=e.touches[0]; sx=t.clientX; sy=t.clientY; swiping=true; },{passive:true});
+  wrap.addEventListener("touchend",e=>{ if(!swiping) return; swiping=false;
+    const t=e.changedTouches[0]; const dx=t.clientX-sx, dy=t.clientY-sy;
+    if(Math.max(Math.abs(dx),Math.abs(dy))<24) return;
+    if(Math.abs(dx)>Math.abs(dy)) slide(dx>0?"right":"left"); else slide(dy>0?"down":"up");
+  },{passive:true});
+  // mouse drag
+  let md=false;
+  wrap.addEventListener("mousedown",e=>{md=true;sx=e.clientX;sy=e.clientY;});
+  window.addEventListener("mouseup",e=>{ if(!md) return; md=false; const dx=e.clientX-sx,dy=e.clientY-sy;
+    if(Math.max(Math.abs(dx),Math.abs(dy))<24) return;
+    if(Math.abs(dx)>Math.abs(dy)) slide(dx>0?"right":"left"); else slide(dy>0?"down":"up"); });
+
+  window.addEventListener("resize",()=>render(true));
+
+  // ---------- Wire UI ----------
+  $("#newBtn").onclick=()=>{ mode = mode==="time"||mode==="daily" ? "classic":mode; newGame(true); };
+  $("#undoBtn").onclick=undo;
+  $("#themeBtn").onclick=()=>{ buildThemes(); $("#themeOverlay").classList.add("show"); };
+  $("#themeClose").onclick=()=>close("#themeOverlay");
+  $("#menuBtn").onclick=()=>{ refreshProUI(); $("#menuOverlay").classList.add("show"); };
+  $("#proBtn").onclick=openPro;
+  $("#proClose").onclick=()=>close("#proOverlay");
+  $("#endClose").onclick=()=>close("#endOverlay");
+  $("#endNew").onclick=()=>{ close("#endOverlay"); newGame(true); };
+  $("#buyBtn").onclick=()=>{ window.open(BUY_URL,"_blank"); };
+  $("#haveKey").onclick=()=>{ $("#keyBox").style.display="block"; };
+  $("#redeem").onclick=()=>{ if(validKey($("#keyInput").value)){ unlockPro(); close("#proOverlay"); } else toast("Invalid key"); };
+  $("#menuStart").onclick=()=>{
+    const on=document.querySelector(".mode.on"); const m=on.dataset.mode;
+    if(THEMES && (m==="time"||m==="daily"||m==="big") && !isPro()){ close("#menuOverlay"); return openPro(); }
+    mode=m; close("#menuOverlay"); newGame(true);
+  };
+  $("#modeList").querySelectorAll(".mode").forEach(m=>{
+    m.onclick=()=>{ if(m.classList.contains("locked")) return openPro();
+      document.querySelectorAll(".mode").forEach(x=>x.classList.remove("on")); m.classList.add("on"); };
+  });
+
+  // ---------- Boot ----------
+  applyTheme(localStorage.getItem(LS.theme)||"midnight");
+  refreshProUI();
+  if(loadState() && grid.length){ render(true); syncScores(); if(!hasMoves()){/*keep board*/} }
+  else newGame();
+  // allow deep-link unlock: ?key=XXXXXXXX
+  const p=new URLSearchParams(location.search); if(p.get("key")&&validKey(p.get("key"))) unlockPro();
+})();
+</script>
+</body>
+</html>
