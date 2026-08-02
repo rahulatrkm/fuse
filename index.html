@@ -566,7 +566,7 @@ addEventListener("keydown", e => {
   e.preventDefault(); actx(); move(dir);
 });
 let sx = 0, sy = 0, swiping = false;
-cv.addEventListener("pointerdown", e => { actx(); swiping = true; sx = e.clientX; sy = e.clientY; });
+cv.addEventListener("pointerdown", e => { actx(); swiping = true; sx = e.clientX; sy = e.clientY; cv.setPointerCapture(e.pointerId); });
 cv.addEventListener("pointerup", e => {
   if(!swiping) return;
   swiping = false;
@@ -574,6 +574,8 @@ cv.addEventListener("pointerup", e => {
   if(Math.hypot(dx, dy) < 24) return;
   move(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 2 : 0) : (dy > 0 ? 3 : 1));
 });
+// without this a swipe that leaves the canvas never completes
+cv.addEventListener("pointercancel", () => { swiping = false; });
 
 /* ---------------- ui ---------------- */
 const show = id => $(id).classList.add("on");
@@ -607,8 +609,12 @@ $("btnMute").addEventListener("click", () => {
   $("wave").style.opacity = muted ? ".2" : "1";
   toast(muted ? "Sound off" : "Sound on");
 });
-$("btnPlay").addEventListener("click", () => { actx(); newGame(); hide("vStart"); });
-$("btnAgain").addEventListener("click", () => { newGame(); hide("vEnd"); });
+/* a button keeps focus after a click, so Space or Enter would re-activate it
+   instead of reaching the game */
+const dropFocus = () => { if(document.activeElement && document.activeElement.blur) document.activeElement.blur(); };
+
+$("btnPlay").addEventListener("click", () => { actx(); newGame(); hide("vStart"); dropFocus(); });
+$("btnAgain").addEventListener("click", () => { newGame(); hide("vEnd"); dropFocus(); });
 $("btnHow").addEventListener("click", () => show("vHow"));
 $("btnCloseHow").addEventListener("click", () => hide("vHow"));
 $("btnShare").addEventListener("click", async () => {
