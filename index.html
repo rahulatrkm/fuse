@@ -209,17 +209,22 @@
 /* =========================================================================
    Fuse — a merge puzzle.
 
+   Tiles are objects with identity, not numbers in a grid. That is the whole
+   reason this feels like a game rather than a spreadsheet: a tile knows where
+   it came from, so it can slide there, and a tile that absorbed another knows
+   to pop. Rendering straight from a grid makes pieces teleport, which is the
+   single clearest tell of an unfinished merge game.
+
    Everything is free. An earlier build locked time attack, the daily board,
-   larger grids and undo behind a purchase link that returns 404, so players
-   met a paywall that could not be paid. The lock is gone rather than papered
-   over.
+   larger grids and undo behind a purchase link that returned 404.
    ========================================================================= */
 
 const $ = id => document.getElementById(id);
 const TAU = Math.PI * 2;
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const lerp = (a, b, t) => a + (b - a) * t;
 const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
-const easeOutBack = t => 1 + 2.2 * Math.pow(t - 1, 3) + 1.2 * Math.pow(t - 1, 2);
+const easeOutBack = t => { const c = 1.9; return 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2); };
 
 const cv = $("c");
 const ctx = cv.getContext("2d");
@@ -260,22 +265,20 @@ function tone(semis, { gain = .07, dur = .34, type = "sine" } = {}){
     o.start(t); o.stop(t + dur);
   }catch(e){}
 }
-function slide(){
+function whoosh(){
   if(muted) return;
   try{
     const a = actx(), t = a.currentTime;
     const o = a.createOscillator(), g = a.createGain();
     o.type = "triangle";
-    o.frequency.setValueAtTime(220, t);
-    o.frequency.exponentialRampToValueAtTime(140, t + .07);
-    g.gain.setValueAtTime(.03, t); g.gain.exponentialRampToValueAtTime(.0001, t + .08);
-    o.connect(g); g.connect(a.destination); o.start(t); o.stop(t + .08);
+    o.frequency.setValueAtTime(240, t);
+    o.frequency.exponentialRampToValueAtTime(150, t + .08);
+    g.gain.setValueAtTime(.028, t); g.gain.exponentialRampToValueAtTime(.0001, t + .09);
+    o.connect(g); g.connect(a.destination); o.start(t); o.stop(t + .09);
   }catch(e){}
 }
 
-/* ---------------- palette ----------------
-   Value maps to hue so the board reads as a gradient of progress rather than
-   as arbitrary colours; big tiles glow so a good run looks like one. */
+/* ---------------- palette ---------------- */
 const TILE_STEPS = [
   [2,   "#3b4258", "#e8ecf6"], [4,   "#454d68", "#e8ecf6"],
   [8,   "#5e7bb8", "#ffffff"], [16,  "#5e9cf0", "#08101f"],
@@ -294,149 +297,177 @@ function styleFor(v){
 /* ---------------- state ---------------- */
 const S = {
   mode: "classic", N: 4,
-  grid: [], tiles: [], nextId: 1,
+  tiles: [], ghosts: [], nextId: 1,
   score: 0, moves: 0, over: false, won: false,
-  anim: 0, animLen: 0, history: [],
-  rng: Math.random, timeLeft: 0, started: false,
-  pops: [], shake: 0,
+  history: [], rng: Math.random,
+  timeLeft: 0, started: false,
+  animT: 999, pops: [], shake: 0,
 };
+
+const SLIDE = 7;   // frames of travel
+const POP   = 8;   // frames of merge/spawn flourish
 
 const LS = "fuse_v2";
 const loadRec = () => { try{ return JSON.parse(localStorage.getItem(LS) || "{}"); }catch(e){ return {}; } };
 const saveRec = r => { try{ localStorage.setItem(LS, JSON.stringify(r)); }catch(e){} };
+const TIME_LIMIT = 180 * 60;
 
-const TIME_LIMIT = 180 * 60;   // frames
+/* ================================ pure rules ================================
+   These take and return plain data so the whole engine can be exercised
+   without a canvas. */
 
-/* ---------------- pure grid rules ---------------- */
-function emptyCells(grid, N){
-  const out = [];
-  for(let y = 0; y < N; y++) for(let x = 0; x < N; x++) if(!grid[y][x]) out.push({ x, y });
+const mkTile = (x, y, value, id) => ({ id, x, y, value, fromX: x, fromY: y, merged: false, fresh: true });
+
+function toGrid(tiles, N){
+  const g = Array.from({ length: N }, () => Array(N).fill(null));
+  for(const t of tiles) g[t.y][t.x] = t;
+  return g;
+}
+const valueGrid = (tiles, N) => toGrid(tiles, N).map(r => r.map(t => t ? t.value : 0));
+
+function emptyCells(tiles, N){
+  const g = toGrid(tiles, N), out = [];
+  for(let y = 0; y < N; y++) for(let x = 0; x < N; x++) if(!g[y][x]) out.push({ x, y });
   return out;
 }
 
-function spawn(grid, N, rng){
-  const free = emptyCells(grid, N);
+function spawn(tiles, N, rng, nextId){
+  const free = emptyCells(tiles, N);
   if(!free.length) return null;
   const spot = free[Math.floor(rng() * free.length)];
-  const value = rng() < 0.9 ? 2 : 4;
-  return { ...spot, value };
+  return mkTile(spot.x, spot.y, rng() < 0.9 ? 2 : 4, nextId);
 }
 
-/* Slide one line toward index 0. Returns the new line plus the merges made,
-   with each tile allowed to merge at most once - the rule that keeps 4-4-4-4
-   from collapsing to a single 16 in one move. */
-function slideLine(line){
-  const vals = line.filter(v => v);
-  const out = [], merges = [];
-  for(let i = 0; i < vals.length; i++){
-    if(i + 1 < vals.length && vals[i] === vals[i + 1]){
-      const v = vals[i] * 2;
-      out.push(v); merges.push(v);
-      i++;
-    }else out.push(vals[i]);
-  }
-  while(out.length < line.length) out.push(0);
-  return { line: out, merges };
+const VEC = [[-1, 0], [0, -1], [1, 0], [0, 1]];   // left, up, right, down
+
+/* Tiles nearest the wall must settle first, or a tile can pass through one
+   that has not moved yet. */
+function traversal(N, vec){
+  const xs = [...Array(N).keys()], ys = [...Array(N).keys()];
+  if(vec[0] === 1) xs.reverse();
+  if(vec[1] === 1) ys.reverse();
+  const out = [];
+  for(const y of ys) for(const x of xs) out.push({ x, y });
+  return out;
 }
 
-function rotateGrid(grid, N, times){
-  let g = grid.map(r => r.slice());
-  for(let t = 0; t < ((times % 4) + 4) % 4; t++){
-    const n = g.map(r => r.slice());
-    for(let y = 0; y < N; y++) for(let x = 0; x < N; x++) n[x][N - 1 - y] = g[y][x];
-    g = n;
-  }
-  return g;
-}
-
-/* dir: 0 left, 1 up, 2 right, 3 down.
-   Rotating clockwise by k maps (y,x) to a new place, and only k=3 turns a
-   column read upward into a row read leftward - so up and down are 3 and 1,
-   not 1 and 3. Getting this backwards inverts the controls. */
-const ROT = [0, 3, 2, 1];
-
-function applyMove(grid, N, dir){
-  const k = ROT[dir];
-  const rotated = rotateGrid(grid, N, k);
+/* Returns the surviving tiles, the absorbed ones (kept only long enough to
+   animate into their target), whether anything moved, and the score gained. */
+function moveTiles(tiles, N, dir){
+  const vec = VEC[dir];
+  const live = tiles.map(t => ({ ...t, fromX: t.x, fromY: t.y, merged: false, fresh: false }));
+  const grid = toGrid(live, N);
+  const absorbed = [];
   let moved = false, gained = 0;
-  const out = rotated.map(row => {
-    const { line, merges } = slideLine(row);
-    if(line.some((v, i) => v !== row[i])) moved = true;
-    for(const m of merges) gained += m;
-    return line;
-  });
-  return { grid: rotateGrid(out, N, -k), moved, gained };
+
+  for(const { x, y } of traversal(N, vec)){
+    const tile = grid[y][x];
+    if(!tile) continue;
+
+    let nx = x, ny = y;
+    for(;;){
+      const px = nx + vec[0], py = ny + vec[1];
+      if(px < 0 || py < 0 || px >= N || py >= N) break;
+      if(grid[py][px]) break;
+      nx = px; ny = py;
+    }
+    const bx = nx + vec[0], by = ny + vec[1];
+    const blocker = (bx >= 0 && by >= 0 && bx < N && by < N) ? grid[by][bx] : null;
+
+    if(blocker && blocker.value === tile.value && !blocker.merged){
+      grid[y][x] = null;
+      blocker.value *= 2;
+      blocker.merged = true;
+      gained += blocker.value;
+      tile.x = blocker.x; tile.y = blocker.y;   // slides in, then disappears
+      absorbed.push(tile);
+      moved = true;
+    }else if(nx !== x || ny !== y){
+      grid[y][x] = null;
+      grid[ny][nx] = tile;
+      tile.x = nx; tile.y = ny;
+      moved = true;
+    }
+  }
+  return { tiles: live.filter(t => !absorbed.includes(t)), absorbed, moved, gained };
 }
 
-function canMove(grid, N){
-  if(emptyCells(grid, N).length) return true;
+function canMove(tiles, N){
+  if(emptyCells(tiles, N).length) return true;
+  const g = valueGrid(tiles, N);
   for(let y = 0; y < N; y++) for(let x = 0; x < N; x++){
-    const v = grid[y][x];
-    if(x + 1 < N && grid[y][x + 1] === v) return true;
-    if(y + 1 < N && grid[y + 1][x] === v) return true;
+    const v = g[y][x];
+    if(x + 1 < N && g[y][x + 1] === v) return true;
+    if(y + 1 < N && g[y + 1][x] === v) return true;
   }
   return false;
 }
 
-const highest = grid => Math.max(0, ...grid.flat());
+const highest = tiles => tiles.reduce((m, t) => Math.max(m, t.value), 0);
 
-/* ---------------- game ---------------- */
+/* ================================ game ================================ */
 function newGame(mode = S.mode){
   S.mode = mode;
   S.N = mode === "big" ? 5 : 4;
   S.rng = mode === "daily" ? mulberry32(hashStr("fuse|" + todayKey())) : Math.random;
-  S.grid = Array.from({ length: S.N }, () => Array(S.N).fill(0));
+  S.tiles = []; S.ghosts = []; S.nextId = 1;
   S.score = 0; S.moves = 0; S.over = false; S.won = false;
   S.history = []; S.pops = []; S.shake = 0;
-  S.timeLeft = TIME_LIMIT; S.started = false;
+  S.timeLeft = TIME_LIMIT; S.started = false; S.animT = 999;
   for(let i = 0; i < 2; i++){
-    const s = spawn(S.grid, S.N, S.rng);
-    if(s) S.grid[s.y][s.x] = s.value;
+    const t = spawn(S.tiles, S.N, S.rng, S.nextId++);
+    if(t) S.tiles.push(t);
   }
   $("timer").classList.toggle("on", mode === "time");
   $("hint").style.display = mode === "time" ? "none" : "";
   resize(); syncHud();
 }
 
-function move(dir){
-  if(S.over) return;
-  const before = S.grid.map(r => r.slice());
-  const { grid, moved, gained } = applyMove(S.grid, S.N, dir);
-  if(!moved) return;
+const snapshot = () => ({
+  tiles: S.tiles.map(t => ({ ...t })), score: S.score, moves: S.moves, nextId: S.nextId,
+});
 
-  S.history.push({ grid: before, score: S.score, moves: S.moves });
+function move(dir){
+  if(S.over || S.animT < SLIDE) return;          // ignore input mid-slide
+  const before = snapshot();
+  const res = moveTiles(S.tiles, S.N, dir);
+  if(!res.moved) return;
+
+  S.history.push(before);
   if(S.history.length > 40) S.history.shift();
 
-  S.grid = grid; S.score += gained; S.moves++; S.started = true;
+  S.tiles = res.tiles;
+  S.ghosts = res.absorbed;
+  S.score += res.gained;
+  S.moves++; S.started = true;
+  S.animT = 0;
 
-  if(gained){
-    const top = highest(S.grid);
-    const step = Math.round(Math.log2(top));
+  const fresh = spawn(S.tiles, S.N, S.rng, S.nextId++);
+  if(fresh) S.tiles.push(fresh);
+
+  if(res.gained){
+    const step = Math.round(Math.log2(highest(S.tiles)));
     tone(Math.min(step * 2, 28), { gain: .075, dur: .42 });
-    S.shake = Math.min(2 + Math.log2(gained || 2), 7);
-    // celebrate the tile that just appeared, wherever it landed
-    for(let y = 0; y < S.N; y++) for(let x = 0; x < S.N; x++)
-      if(S.grid[y][x] >= 128 && before[y][x] !== S.grid[y][x]) burst(x, y, S.grid[y][x]);
-  }else slide();
+    S.shake = Math.min(2 + Math.log2(res.gained || 2), 7);
+    for(const t of S.tiles) if(t.merged && t.value >= 128) burst(t.x, t.y, t.value);
+  }else whoosh();
 
-  const s = spawn(S.grid, S.N, S.rng);
-  if(s) S.grid[s.y][s.x] = s.value;
-
-  if(!S.won && highest(S.grid) >= 2048){
+  if(!S.won && highest(S.tiles) >= 2048){
     S.won = true;
     toast("2048 \u2014 keep going");
     [0,4,7,12].forEach((n,i)=>setTimeout(()=>tone(n+12,{gain:.08,dur:.8}), i*110));
   }
-  if(!canMove(S.grid, S.N)) end();
+  if(!canMove(S.tiles, S.N)) end();
   syncHud();
 }
 
 function undo(){
   const prev = S.history.pop();
   if(!prev){ toast("Nothing to undo"); return; }
-  S.grid = prev.grid; S.score = prev.score; S.moves = prev.moves;
-  S.over = false; hide("vEnd"); syncHud();
-  slide();
+  S.tiles = prev.tiles.map(t => ({ ...t, fromX: t.x, fromY: t.y, merged: false, fresh: false }));
+  S.score = prev.score; S.moves = prev.moves; S.nextId = prev.nextId;
+  S.ghosts = []; S.animT = 999; S.over = false;
+  hide("vEnd"); syncHud(); whoosh();
 }
 
 function burst(x, y, value){
@@ -451,19 +482,18 @@ function burst(x, y, value){
 function end(){
   S.over = true;
   const rec = loadRec();
-  const key = S.mode;
-  rec[key] = Math.max(rec[key] || 0, S.score);
-  rec.top = Math.max(rec.top || 0, highest(S.grid));
+  rec[S.mode] = Math.max(rec[S.mode] || 0, S.score);
+  rec.top = Math.max(rec.top || 0, highest(S.tiles));
   saveRec(rec);
   $("eVerdict").textContent = S.mode === "time" ? "Time" : "No moves left";
   $("eScore").textContent = S.score;
-  $("eTop").textContent = highest(S.grid);
+  $("eTop").textContent = highest(S.tiles);
   $("eMoves").textContent = S.moves;
-  $("eBest").textContent = rec[key] || 0;
+  $("eBest").textContent = rec[S.mode] || 0;
   setTimeout(() => show("vEnd"), 420);
 }
 
-/* ---------------- render ---------------- */
+/* ================================ render ================================ */
 let cellPx = 0, gapPx = 0, padPx = 0;
 function resize(){
   const r = cv.getBoundingClientRect();
@@ -476,7 +506,7 @@ function resize(){
   cellPx = (r.width - padPx * 2 - gapPx * (S.N - 1)) / S.N;
 }
 addEventListener("resize", resize);
-const cellX = x => padPx + x * (cellPx + gapPx);
+const cellAt = i => padPx + i * (cellPx + gapPx);
 
 function rrect(x, y, w, h, r){
   ctx.beginPath();
@@ -488,11 +518,52 @@ function rrect(x, y, w, h, r){
   ctx.closePath();
 }
 
+function drawTile(t, slideP, popP){
+  const gx = lerp(t.fromX, t.x, slideP);
+  const gy = lerp(t.fromY, t.y, slideP);
+  let scale = 1;
+  if(t.fresh) scale = popP >= 1 ? 1 : Math.max(0, easeOutBack(popP));
+  else if(t.merged && popP < 1) scale = 1 + 0.16 * Math.sin(Math.PI * popP);
+
+  const st = styleFor(t.value);
+  const size = cellPx * scale;
+  const X = cellAt(gx) + (cellPx - size) / 2;
+  const Y = cellAt(gy) + (cellPx - size) / 2;
+  const rad = size * 0.17;
+
+  if(st.glow){
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    const cxp = X + size / 2, cyp = Y + size / 2;
+    const g = ctx.createRadialGradient(cxp, cyp, 0, cxp, cyp, size * .9);
+    g.addColorStop(0, st.bg + "55"); g.addColorStop(1, st.bg + "00");
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(cxp, cyp, size * .9, 0, TAU); ctx.fill();
+    ctx.restore();
+  }
+
+  rrect(X, Y, size, size, rad);
+  ctx.fillStyle = st.bg; ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,.12)"; ctx.lineWidth = 1; ctx.stroke();
+
+  const text = String(t.value);
+  const fs = size * (text.length > 3 ? .3 : text.length > 2 ? .36 : .42);
+  ctx.fillStyle = st.fg;
+  ctx.font = `650 ${fs}px ui-sans-serif,-apple-system,system-ui,sans-serif`;
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText(text, X + size / 2, Y + size / 2 + fs * .04);
+}
+
 function draw(){
   requestAnimationFrame(draw);
   const r = cv.getBoundingClientRect();
   if(!r.width || !cellPx) return;
   ctx.clearRect(0, 0, r.width, r.height);
+
+  S.animT++;
+  const slideP = easeOutCubic(clamp(S.animT / SLIDE, 0, 1));
+  const popP = clamp((S.animT - SLIDE) / POP, 0, 1);
+  if(S.animT >= SLIDE && S.ghosts.length) S.ghosts = [];
 
   ctx.save();
   if(S.shake > .15){
@@ -501,37 +572,13 @@ function draw(){
     S.shake *= .84;
   }
 
-  const rad = cellPx * 0.17;
   for(let y = 0; y < S.N; y++) for(let x = 0; x < S.N; x++){
-    rrect(cellX(x), cellX(y), cellPx, cellPx, rad);
+    rrect(cellAt(x), cellAt(y), cellPx, cellPx, cellPx * 0.17);
     ctx.fillStyle = "rgba(255,255,255,.045)"; ctx.fill();
   }
 
-  for(let y = 0; y < S.N; y++) for(let x = 0; x < S.N; x++){
-    const v = S.grid[y][x];
-    if(!v) continue;
-    const st = styleFor(v);
-    const X = cellX(x), Y = cellX(y);
-    if(st.glow){
-      ctx.save();
-      ctx.globalCompositeOperation = "lighter";
-      const g = ctx.createRadialGradient(X + cellPx/2, Y + cellPx/2, 0, X + cellPx/2, Y + cellPx/2, cellPx * .9);
-      g.addColorStop(0, st.bg + "55"); g.addColorStop(1, st.bg + "00");
-      ctx.fillStyle = g;
-      ctx.beginPath(); ctx.arc(X + cellPx/2, Y + cellPx/2, cellPx * .9, 0, TAU); ctx.fill();
-      ctx.restore();
-    }
-    rrect(X, Y, cellPx, cellPx, rad);
-    ctx.fillStyle = st.bg; ctx.fill();
-    ctx.strokeStyle = "rgba(255,255,255,.12)"; ctx.lineWidth = 1; ctx.stroke();
-
-    const text = String(v);
-    const size = cellPx * (text.length > 3 ? .3 : text.length > 2 ? .36 : .42);
-    ctx.fillStyle = st.fg;
-    ctx.font = `650 ${size}px ui-sans-serif,-apple-system,system-ui,sans-serif`;
-    ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText(text, X + cellPx / 2, Y + cellPx / 2 + size * .04);
-  }
+  for(const t of S.ghosts) drawTile(t, slideP, 0);
+  for(const t of S.tiles) drawTile(t, slideP, popP);
 
   ctx.globalCompositeOperation = "lighter";
   for(let i = S.pops.length - 1; i >= 0; i--){
@@ -542,7 +589,7 @@ function draw(){
     ctx.globalAlpha = Math.max(0, p.life) * .8;
     ctx.fillStyle = p.col;
     ctx.beginPath();
-    ctx.arc(cellX(p.gx) + cellPx / 2, cellX(p.gy) + cellPx / 2, p.r * (.4 + p.life), 0, TAU);
+    ctx.arc(cellAt(p.gx) + cellPx / 2, cellAt(p.gy) + cellPx / 2, p.r * (.4 + p.life), 0, TAU);
     ctx.fill();
   }
   ctx.globalAlpha = 1;
@@ -557,7 +604,7 @@ function draw(){
 }
 requestAnimationFrame(draw);
 
-/* ---------------- input ---------------- */
+/* ================================ input ================================ */
 addEventListener("keydown", e => {
   const map = { ArrowLeft: 0, ArrowUp: 1, ArrowRight: 2, ArrowDown: 3,
                 a: 0, w: 1, d: 2, s: 3 };
@@ -566,7 +613,10 @@ addEventListener("keydown", e => {
   e.preventDefault(); actx(); move(dir);
 });
 let sx = 0, sy = 0, swiping = false;
-cv.addEventListener("pointerdown", e => { actx(); swiping = true; sx = e.clientX; sy = e.clientY; cv.setPointerCapture(e.pointerId); });
+cv.addEventListener("pointerdown", e => {
+  actx(); swiping = true; sx = e.clientX; sy = e.clientY;
+  try{ cv.setPointerCapture(e.pointerId); }catch(err){}
+});
 cv.addEventListener("pointerup", e => {
   if(!swiping) return;
   swiping = false;
@@ -574,10 +624,9 @@ cv.addEventListener("pointerup", e => {
   if(Math.hypot(dx, dy) < 24) return;
   move(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 2 : 0) : (dy > 0 ? 3 : 1));
 });
-// without this a swipe that leaves the canvas never completes
 cv.addEventListener("pointercancel", () => { swiping = false; });
 
-/* ---------------- ui ---------------- */
+/* ================================ ui ================================ */
 const show = id => $(id).classList.add("on");
 const hide = id => $(id).classList.remove("on");
 let toastT = null;
@@ -589,37 +638,36 @@ function syncHud(){
   const rec = loadRec();
   $("sScore").textContent = S.score;
   $("sBest").textContent = rec[S.mode] || 0;
-  $("sTop").textContent = highest(S.grid);
+  $("sTop").textContent = highest(S.tiles);
   $("btnUndo").disabled = !S.history.length;
 }
+/* a button keeps focus after a click, so Space or Enter would re-activate it
+   instead of reaching the game */
+const dropFocus = () => { if(document.activeElement && document.activeElement.blur) document.activeElement.blur(); };
 
 document.querySelectorAll(".mode").forEach(b => b.addEventListener("click", () => {
   document.querySelectorAll(".mode").forEach(x => x.setAttribute("aria-pressed", "false"));
   b.setAttribute("aria-pressed", "true");
   newGame(b.dataset.mode);
-  hide("vEnd");
+  hide("vEnd"); dropFocus();
   toast(b.dataset.mode === "daily" ? "Same board for everyone today" :
         b.dataset.mode === "time" ? "Three minutes" :
         b.dataset.mode === "big" ? "Five by five" : "Classic");
 }));
-$("btnUndo").addEventListener("click", undo);
-$("btnNew").addEventListener("click", () => { newGame(); hide("vEnd"); toast("New game"); });
+$("btnUndo").addEventListener("click", () => { undo(); dropFocus(); });
+$("btnNew").addEventListener("click", () => { newGame(); hide("vEnd"); dropFocus(); toast("New game"); });
 $("btnMute").addEventListener("click", () => {
   muted = !muted;
   $("wave").style.opacity = muted ? ".2" : "1";
   toast(muted ? "Sound off" : "Sound on");
 });
-/* a button keeps focus after a click, so Space or Enter would re-activate it
-   instead of reaching the game */
-const dropFocus = () => { if(document.activeElement && document.activeElement.blur) document.activeElement.blur(); };
-
 $("btnPlay").addEventListener("click", () => { actx(); newGame(); hide("vStart"); dropFocus(); });
 $("btnAgain").addEventListener("click", () => { newGame(); hide("vEnd"); dropFocus(); });
 $("btnHow").addEventListener("click", () => show("vHow"));
-$("btnCloseHow").addEventListener("click", () => hide("vHow"));
+$("btnCloseHow").addEventListener("click", () => { hide("vHow"); dropFocus(); });
 $("btnShare").addEventListener("click", async () => {
   const label = S.mode === "daily" ? `Fuse daily ${todayKey()}` : `Fuse (${S.mode})`;
-  const text = `${label} \u2014 ${S.score} points, highest tile ${highest(S.grid)}\nhttps://rahulatrkm.github.io/fuse/`;
+  const text = `${label} \u2014 ${S.score} points, highest tile ${highest(S.tiles)}\nhttps://rahulatrkm.github.io/fuse/`;
   try{
     if(navigator.share){ await navigator.share({ text }); return; }
     await navigator.clipboard.writeText(text); toast("Copied");
