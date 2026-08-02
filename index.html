@@ -79,6 +79,11 @@
   .timer i{display:block; height:100%; width:100%; transform-origin:left; border-radius:3px;
     background:linear-gradient(90deg,var(--gold),#e8735e)}
   .hint{flex:1; font-size:12px; color:var(--faint); text-align:center}
+  .themes{display:flex; gap:6px; justify-content:center; padding-top:12px}
+  .swatch{width:22px; height:22px; border-radius:50%; border:1.5px solid transparent;
+    opacity:.55; transition:.16s cubic-bezier(.22,1,.36,1)}
+  .swatch:hover{opacity:.85; transform:scale(1.1)}
+  .swatch.on{opacity:1; border-color:rgba(255,255,255,.75); transform:scale(1.12)}
 
   .veil{position:fixed; inset:0; z-index:30; display:grid; place-items:center; padding:24px;
     background:radial-gradient(ellipse at 50% 38%, rgba(40,32,20,.6), rgba(6,8,14,.95) 72%);
@@ -163,6 +168,7 @@
     <div class="timer" id="timer"><i id="timerFill"></i></div>
     <div class="hint" id="hint">swipe or use the arrow keys</div>
   </div>
+  <div class="themes" id="themes" role="group" aria-label="Colour theme"></div>
 </div>
 
 <div class="veil on" id="vStart">
@@ -294,6 +300,52 @@ function styleFor(v){
   return { bg: s[1], fg: s[2], glow: v >= 128 };
 }
 
+/* ---------------- themes ----------------
+   All seven, all free. They were behind a paywall that could not be paid. */
+const THEMES = {
+  midnight:{ name:"Midnight", sw:"linear-gradient(135deg,#7c5cff,#22d3ee)",
+    vars:{ "--bg":"#080a12", "--gold":"#7c5cff", "--blue":"#22d3ee" } },
+  sunset:{ name:"Sunset", sw:"linear-gradient(135deg,#ff7e5f,#feb47b)",
+    vars:{ "--bg":"#170d13", "--gold":"#ff9e7f", "--blue":"#feb47b" } },
+  emerald:{ name:"Emerald", sw:"linear-gradient(135deg,#11998e,#38ef7d)",
+    vars:{ "--bg":"#06140f", "--gold":"#38ef7d", "--blue":"#11998e" } },
+  neon:{ name:"Neon", sw:"linear-gradient(135deg,#ff00cc,#00e5ff)",
+    vars:{ "--bg":"#0a0014", "--gold":"#ff4fd8", "--blue":"#00e5ff" } },
+  gold:{ name:"Royal", sw:"linear-gradient(135deg,#f7971e,#ffd200)",
+    vars:{ "--bg":"#12100a", "--gold":"#ffd200", "--blue":"#f7971e" } },
+  mono:{ name:"Ink", sw:"linear-gradient(135deg,#434343,#111)",
+    vars:{ "--bg":"#0a0a0a", "--gold":"#e5e5e5", "--blue":"#9a9a9a" } },
+  ocean:{ name:"Ocean", sw:"linear-gradient(135deg,#2193b0,#6dd5ed)",
+    vars:{ "--bg":"#04121a", "--gold":"#6dd5ed", "--blue":"#2193b0" } },
+};
+
+function applyTheme(key){
+  const t = THEMES[key] || THEMES.midnight;
+  for(const [k, v] of Object.entries(t.vars)) document.documentElement.style.setProperty(k, v);
+  document.body.style.background = t.vars["--bg"];
+  const rec = loadRec(); rec.theme = key; saveRec(rec);
+}
+
+function buildThemePicker(){
+  const wrap = $("themes");
+  if(!wrap) return;
+  wrap.innerHTML = "";
+  const current = loadRec().theme || "midnight";
+  for(const [key, t] of Object.entries(THEMES)){
+    const b = document.createElement("button");
+    b.className = "swatch" + (key === current ? " on" : "");
+    b.style.background = t.sw;
+    b.title = t.name;
+    b.setAttribute("aria-label", t.name);
+    b.addEventListener("click", () => {
+      applyTheme(key);
+      [...wrap.children].forEach(c => c.classList.toggle("on", c === b));
+      toast(t.name);
+    });
+    wrap.appendChild(b);
+  }
+}
+
 /* ---------------- state ---------------- */
 const S = {
   mode: "classic", N: 4,
@@ -308,6 +360,28 @@ const SLIDE = 7;   // frames of travel
 const POP   = 8;   // frames of merge/spawn flourish
 
 const LS = "fuse_v2";
+
+/* Renaming the storage key silently wiped every existing player's records, so
+   read the old keys once and carry them forward. */
+function migrate(){
+  try{
+    if(localStorage.getItem(LS)) return;
+    const old = {
+      classic: +(localStorage.getItem("fuse.best") || 0),
+      time: +(localStorage.getItem("fuse.best.time") || 0),
+      theme: localStorage.getItem("fuse.theme") || null,
+    };
+    if(old.classic || old.time || old.theme){
+      const carried = {};
+      if(old.classic) carried.classic = old.classic;
+      if(old.time) carried.time = old.time;
+      if(old.theme) carried.theme = old.theme;
+      localStorage.setItem(LS, JSON.stringify(carried));
+    }
+  }catch(e){}
+}
+migrate();
+
 const loadRec = () => { try{ return JSON.parse(localStorage.getItem(LS) || "{}"); }catch(e){ return {}; } };
 const saveRec = r => { try{ localStorage.setItem(LS, JSON.stringify(r)); }catch(e){} };
 const TIME_LIMIT = 180 * 60;
@@ -675,6 +749,8 @@ $("btnShare").addEventListener("click", async () => {
 });
 
 (function init(){
+  applyTheme(loadRec().theme || "midnight");
+  buildThemePicker();
   newGame("classic");
   const rec = loadRec();
   $("bestFoot").textContent = rec.classic
