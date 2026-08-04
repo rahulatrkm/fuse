@@ -754,7 +754,19 @@ document.querySelectorAll(".mode").forEach(b => b.addEventListener("click", () =
         b.dataset.mode === "big" ? "Five by five" : "Classic");
 }));
 $("btnUndo").addEventListener("click", () => { undo(); dropFocus(); });
-$("btnNew").addEventListener("click", () => { newGame(); hide("vEnd"); dropFocus(); toast("New game"); });
+// Starting over throws away a game in progress, and the button sits next to
+// Undo. A game worth keeping costs a second tap; an empty board does not.
+let newArmed = 0;
+$("btnNew").addEventListener("click", () => {
+  dropFocus();
+  if (S.score > 0 && !S.over && Date.now() > newArmed) {
+    newArmed = Date.now() + 4000;
+    toast("Tap New again to abandon this game");
+    return;
+  }
+  newArmed = 0;
+  newGame(); hide("vEnd"); toast("New game");
+});
 $("btnMute").addEventListener("click", () => {
   muted = !muted;
   $("wave").style.opacity = muted ? ".2" : "1";
